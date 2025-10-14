@@ -62,24 +62,65 @@ export const ApplyingHardeningPage = () => {
         console.log('Apply result:', result);
         
         if (result.success) {
-          // Parse text output to determine success/failure for each rule
           const output = result.data || '';
           console.log('Apply output:', output);
           
-          // Look for the summary line: "Summary: X applied, Y failed, Z skipped"
-          const summaryMatch = output.match(/Summary:\s*(\d+)\s*applied,\s*(\d+)\s*failed/i);
-          
-          let appliedCount = 0;
-          
-          if (summaryMatch) {
-            appliedCount = parseInt(summaryMatch[1]);
+          // Check if output is JSON (new format with --json flag)
+          let jsonData: any = null;
+          if (typeof output === 'object') {
+            jsonData = output;
+          } else if (typeof output === 'string') {
+            try {
+              // Try to extract JSON from output (might have "Loaded" messages before JSON)
+              const jsonMatch = output.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                jsonData = JSON.parse(jsonMatch[0]);
+              }
+            } catch (e) {
+              console.log('Not JSON format, parsing as text table');
+            }
           }
           
-          // Parse per-rule status from the table
-          // Look for lines like: │ LNX-300 │ ✓ SUCCESS │ Applied and verified │
-          const statusLines = output.match(/│\s*(\S+)\s*│\s*([✓✗])\s*(\w+)\s*│([^│]+)│/g);
-          
-          if (statusLines) {
+          // Handle JSON format
+          if (jsonData && jsonData.results) {
+            console.log('Parsing JSON format response:', jsonData);
+            const results = jsonData.results;
+            
+            setApplyStatuses((prev) => {
+              return prev.map(status => {
+                const ruleResult = results.find((r: any) => r.rule_id === status.ruleId);
+                if (ruleResult) {
+                  const success = ruleResult.status === 'success';
+                  if (success) {
+                    setSuccessCount(c => c + 1);
+                  } else {
+                    setFailureCount(c => c + 1);
+                  }
+                  return {
+                    ...status,
+                    status: success ? 'success' : 'failure',
+                    message: ruleResult.message || (success ? 'Applied successfully' : 'Failed to apply'),
+                  };
+                }
+                return status;
+              });
+            });
+          } else {
+            // Handle text table format (legacy)
+            // Look for the summary line: "Summary: X applied, Y failed, Z skipped"
+            const summaryMatch = output.match(/Summary:\s*(\d+)\s*applied,\s*(\d+)\s*failed/i);
+            
+            let appliedCount = 0;
+            
+            if (summaryMatch) {
+              appliedCount = parseInt(summaryMatch[1]);
+            }
+            
+            // Parse per-rule status from the table
+            // Look for lines like: │ LNX-300 │ ✓ SUCCESS │ Applied and verified │
+            const statusLines = output.match(/│\s*(\S+)\s*│\s*([✓✗])\s*(\w+)\s*│([^│]+)│/g);
+            
+            if (statusLines) {
             setApplyStatuses((prev) => {
               return prev.map(status => {
                 // Find this rule in the output
@@ -129,6 +170,7 @@ export const ApplyingHardeningPage = () => {
                 message: 'Failed to apply',
               })));
               setFailureCount(ruleIds.length);
+            }
             }
           }
         } else {

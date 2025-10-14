@@ -719,7 +719,7 @@ function setupIPCHandlers(): void {
       
       const outputPath = appSettings.ssh.enabled 
         ? `/tmp/${outputFileName}`
-        : join(app.getPath('userData'), outputFileName)
+        : join(app.getPath('downloads'), outputFileName)
       
       const args = ['--format', format, '--output', outputPath]
       
