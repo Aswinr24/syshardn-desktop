@@ -253,8 +253,7 @@ function executeSyshardnCommand(
     if (reportPath) {
       logToFile(`Report path provided: ${reportPath}`)
     }
-    
-    // Set UTF-8 encoding for Windows to prevent Unicode errors
+
     const spawnEnv = { ...process.env };
     if (process.platform === 'win32') {
       spawnEnv.PYTHONIOENCODING = 'utf-8';
@@ -519,16 +518,26 @@ function setupIPCHandlers(): void {
         args.push('--rules', config.rules.join(','))
       }
 
-      const reportFileName = `syshardn-report-${Date.now()}.json`
-      const reportPath = appSettings.ssh.enabled 
-        ? `/tmp/${reportFileName}`
-        : join(app.getPath('userData'), reportFileName)
+      // On Windows, use --json flag to get JSON output directly (avoids Unicode issues)
+      // On SSH, use --report flag to write to file
+      const isWindows = process.platform === 'win32' && !appSettings.ssh.enabled;
+      let reportPath: string | undefined;
       
-      args.push('--report', reportPath)
+      if (isWindows) {
+        args.push('--json');
+        logToFile('Windows detected - using --json flag for direct JSON output');
+      } else {
+        const reportFileName = `syshardn-report-${Date.now()}.json`;
+        reportPath = appSettings.ssh.enabled 
+          ? `/tmp/${reportFileName}`
+          : join(app.getPath('userData'), reportFileName);
+        
+        args.push('--report', reportPath);
+        logToFile(`Report will be saved to: ${reportPath}`);
+      }
       
       logToFile(`Scan config: ${JSON.stringify(config, null, 2)}`)
       logToFile(`Platform: ${process.platform}`)
-      logToFile(`Report will be saved to: ${reportPath}`)
       logToFile(`userData directory: ${app.getPath('userData')}`)
 
       const result = await executeSyshardnCommand('check', args, reportPath);
