@@ -257,6 +257,10 @@ function executeSyshardnCommand(
     const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs])
     let stdout = ''
     let stderr = ''
+    let stdoutClosed = false;
+    let stderrClosed = false;
+    let processExited = false;
+    let exitCode: number | null = null;
 
     syshardn.stdout.on('data', (data) => {
       const chunk = data.toString()
@@ -269,92 +273,148 @@ function executeSyshardnCommand(
       }
     })
 
+    syshardn.stdout.on('close', () => {
+      stdoutClosed = true;
+      logToFile('stdout stream closed');
+    });
+
     syshardn.stderr.on('data', (data) => {
       const chunk = data.toString()
       stderr += chunk
       logToFile(`Local stderr: ${chunk}`)
     })
 
+    syshardn.stderr.on('close', () => {
+      stderrClosed = true;
+      logToFile('stderr stream closed');
+    });
+
+    syshardn.on('exit', (code) => {
+      processExited = true;
+      exitCode = code;
+      logToFile(`Process exited with code: ${code}`);
+    });
+
     syshardn.on('close', (code) => {
-      logToFile(`Local command exited with code: ${code}`)
+      logToFile(`All streams closed, final exit code: ${code}`)
       logToFile(`Stdout length: ${stdout.length} chars`)
       logToFile(`Stdout preview (first 500 chars): ${stdout.substring(0, 500)}`)
+      logToFile(`Stdout preview (last 500 chars): ${stdout.substring(Math.max(0, stdout.length - 500))}`)
+      logToFile(`Process state: exit=${processExited}, stdout=${stdoutClosed}, stderr=${stderrClosed}`)
       
       if (code === 0 || code === 1) {
         if (reportPath) {
-          // On Windows, the file might take a moment to be flushed to disk
-          // Add a small delay before checking
-          setTimeout(() => {
-            try {
-              // Normalize path for Windows - resolve to absolute path
-              const normalizedPath = require('path').resolve(reportPath);
-              logToFile(`Normalized report path: ${normalizedPath}`);
-              
-              // Check if file exists
-              if (fs.existsSync(normalizedPath)) {
-                logToFile(`Report file found at: ${normalizedPath}`);
-                const reportData = fs.readFileSync(normalizedPath, 'utf8')
-                const jsonData = JSON.parse(reportData)
-                logToFile('Successfully read and parsed local report file')
-                logToFile(`Report summary: ${jsonData.summary?.total || 'N/A'} checks`)
-                resolve({ success: true, data: jsonData })
-              } else {
-                // Try to list files in the temp directory to debug
-                const tempDir = require('path').dirname(normalizedPath);
-                logToFile(`Report file not found at: ${normalizedPath}`);
-                logToFile(`Temp directory: ${tempDir}`);
+          // On Windows, the file might take longer to be flushed to disk
+          // Wait for process to fully complete and file to be written
+          const isWindows = process.platform === 'win32';
+          const waitTime = isWindows ? 3000 : 500;
+          const maxRetries = isWindows ? 10 : 1;
+          
+          logToFile(`Waiting ${waitTime}ms before checking for report file (Windows: ${isWindows})`);
+          
+          const checkFileWithRetry = (retryCount: number) => {
+            setTimeout(() => {
+              try {
+                // Normalize path for Windows - resolve to absolute path
+                const normalizedPath = require('path').resolve(reportPath);
+                logToFile(`Normalized report path: ${normalizedPath} (attempt ${retryCount + 1}/${maxRetries})`);
                 
-                try {
-                  const files = fs.readdirSync(tempDir);
-                  const reportFiles = files.filter(f => f.startsWith('syshardn-report-'));
-                  logToFile(`Found ${reportFiles.length} syshardn report files in temp dir:`);
-                  reportFiles.forEach(f => logToFile(`  - ${f}`));
+                // Check if file exists
+                if (fs.existsSync(normalizedPath)) {
+                  logToFile(`Report file found at: ${normalizedPath}`);
+                  const reportData = fs.readFileSync(normalizedPath, 'utf8')
+                  const jsonData = JSON.parse(reportData)
+                  logToFile('Successfully read and parsed local report file')
+                  logToFile(`Report summary: ${jsonData.summary?.total || 'N/A'} checks`)
+                  resolve({ success: true, data: jsonData })
+                } else if (retryCount < maxRetries - 1) {
+                  // Retry
+                  logToFile(`File not found, retrying... (${retryCount + 1}/${maxRetries})`);
+                  checkFileWithRetry(retryCount + 1);
+                } else {
+                  // Final attempt - exhausted retries
+                  const tempDir = require('path').dirname(normalizedPath);
+                  logToFile(`Report file not found at: ${normalizedPath} after ${maxRetries} attempts`);
+                  logToFile(`Temp directory: ${tempDir}`);
                   
-                  // Try to find a report file with similar timestamp
-                  const expectedFilename = require('path').basename(normalizedPath);
-                  const foundFile = files.find(f => f.toLowerCase() === expectedFilename.toLowerCase());
+                  try {
+                    const files = fs.readdirSync(tempDir);
+                    const reportFiles = files.filter(f => f.startsWith('syshardn-report-'));
+                    logToFile(`Found ${reportFiles.length} syshardn report files in temp dir:`);
+                    reportFiles.forEach(f => logToFile(`  - ${f}`));
+                    
+                    // Try to find a report file with similar timestamp
+                    const expectedFilename = require('path').basename(normalizedPath);
+                    const foundFile = files.find(f => f.toLowerCase() === expectedFilename.toLowerCase());
+                    
+                    if (foundFile) {
+                      const actualPath = require('path').join(tempDir, foundFile);
+                      logToFile(`Found file with case-insensitive match: ${actualPath}`);
+                      const reportData = fs.readFileSync(actualPath, 'utf8');
+                      const jsonData = JSON.parse(reportData);
+                      logToFile('Successfully read and parsed report file with corrected path');
+                      resolve({ success: true, data: jsonData });
+                      return;
+                    }
+                  } catch (listError) {
+                    logToFile(`Failed to list temp directory: ${listError}`);
+                  }
                   
-                  if (foundFile) {
-                    const actualPath = require('path').join(tempDir, foundFile);
-                    logToFile(`Found file with case-insensitive match: ${actualPath}`);
-                    const reportData = fs.readFileSync(actualPath, 'utf8');
-                    const jsonData = JSON.parse(reportData);
-                    logToFile('Successfully read and parsed report file with corrected path');
-                    resolve({ success: true, data: jsonData });
-                    return;
+                  // File not found - try to parse stdout instead
+                  logToFile('Report file not found, attempting to parse stdout for JSON');
+                  try {
+                    // Try to find JSON in stdout
+                    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                      const jsonData = JSON.parse(jsonMatch[0]);
+                      logToFile('Successfully parsed JSON from stdout');
+                      resolve({ success: true, data: jsonData });
+                      return;
+                    }
+                  } catch (parseError) {
+                    logToFile(`Failed to parse JSON from stdout: ${parseError}`);
                   }
-                } catch (listError) {
-                  logToFile(`Failed to list temp directory: ${listError}`);
+                  
+                  resolve({ success: false, data: null, error: 'Report file not found and no JSON in stdout' })
                 }
-                
-                // File not found - try to parse stdout instead
-                logToFile('Report file not found, attempting to parse stdout for JSON');
-                try {
-                  // Try to find JSON in stdout
-                  const jsonMatch = stdout.match(/\{[\s\S]*\}/);
-                  if (jsonMatch) {
-                    const jsonData = JSON.parse(jsonMatch[0]);
-                    logToFile('Successfully parsed JSON from stdout');
-                    resolve({ success: true, data: jsonData });
-                    return;
-                  }
-                } catch (parseError) {
-                  logToFile(`Failed to parse JSON from stdout: ${parseError}`);
-                }
-                
-                resolve({ success: false, data: null, error: 'Report file not found and no JSON in stdout' })
+              } catch (e) {
+                logToFile(`Failed to read/parse report: ${e}`)
+                resolve({ success: false, data: null, error: 'Failed to read report file' })
               }
-            } catch (e) {
-              logToFile(`Failed to read/parse report: ${e}`)
-              resolve({ success: false, data: null, error: 'Failed to read report file' })
-            }
-          }, 500); // Wait 500ms for file to be written to disk
+            }, waitTime);
+          };
+          
+          // Start the retry process
+          checkFileWithRetry(0);
         } else {
+          // No report path - parse from stdout
+          logToFile('No report path provided, parsing stdout for JSON');
           try {
-            const jsonData = JSON.parse(stdout)
-            resolve({ success: true, data: jsonData })
+            // First try to parse the entire stdout as JSON
+            try {
+              const jsonData = JSON.parse(stdout);
+              logToFile('Successfully parsed entire stdout as JSON');
+              resolve({ success: true, data: jsonData });
+              return;
+            } catch (e) {
+              // Not pure JSON, try to extract JSON from mixed output
+              logToFile('Stdout is not pure JSON, attempting to extract JSON object');
+            }
+            
+            // Look for JSON object in the output (could be after table output)
+            const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const jsonData = JSON.parse(jsonMatch[0]);
+              logToFile('Successfully extracted and parsed JSON from stdout');
+              resolve({ success: true, data: jsonData });
+              return;
+            }
+            
+            logToFile('No JSON found in stdout');
+            resolve({ success: false, data: stdout, error: 'No JSON output found in command output' });
           } catch (e) {
-            resolve({ success: false, data: stdout, error: 'Failed to parse JSON output' })
+            logToFile(`Failed to parse JSON from stdout: ${e}`);
+            resolve({ success: false, data: stdout, error: 'Failed to parse JSON output' });
           }
         }
       } else {
@@ -459,6 +519,7 @@ function setupIPCHandlers(): void {
       args.push('--report', reportPath)
       
       logToFile(`Scan config: ${JSON.stringify(config, null, 2)}`)
+      logToFile(`Platform: ${process.platform}`)
       logToFile(`Report will be saved to: ${reportPath}`)
       logToFile(`userData directory: ${app.getPath('userData')}`)
 
