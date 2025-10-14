@@ -56,6 +56,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Prepare Linux build deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full xz-utils libfuse2 fakeroot rpm dpkg-dev
+          sudo snap install snapcraft --classic || true
+          if [ -f node_modules/app-builder-bin/linux/x64/app-builder ]; then
+            chmod +x node_modules/app-builder-bin/linux/x64/app-builder || true
+          fi
+          rm -rf ~/.cache/electron-builder || true
+
       - name: Build and Release
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
