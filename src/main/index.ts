@@ -260,7 +260,6 @@ function executeSyshardnCommand(
     let stdoutClosed = false;
     let stderrClosed = false;
     let processExited = false;
-    let exitCode: number | null = null;
 
     syshardn.stdout.on('data', (data) => {
       const chunk = data.toString()
@@ -291,7 +290,6 @@ function executeSyshardnCommand(
 
     syshardn.on('exit', (code) => {
       processExited = true;
-      exitCode = code;
       logToFile(`Process exited with code: ${code}`);
     });
 

@@ -14,21 +14,44 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       release_id: ${{ steps.create_release.outputs.id }}
+      tag_name: ${{ steps.set_tag.outputs.tag_name }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set tag name
+        id: set_tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            TAG_NAME="v$(date +'%Y.%m.%d')-build.${{ github.run_number }}"
+            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git tag $TAG_NAME
+            git push origin $TAG_NAME || true
+          fi
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Syshardn Desktop ${{ github.ref }}
+          tag_name: ${{ steps.set_tag.outputs.tag_name }}
+          release_name: Syshardn Desktop ${{ steps.set_tag.outputs.tag_name }}
           body: |
             Desktop application for Syshardn system hardening tool.
+            
+            **Build Info:**
+            - Commit: ${{ github.sha }}
+            - Branch: ${{ github.ref_name }}
             
             **Downloads:**
             - macOS: `.dmg` file
@@ -40,6 +63,7 @@ jobs:
           prerelease: false
 
   build:
+    needs: create-release
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -84,8 +108,8 @@ jobs:
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: |
             dist/*.dmg
             dist/*.zip
