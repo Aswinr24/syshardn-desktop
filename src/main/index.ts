@@ -254,7 +254,17 @@ function executeSyshardnCommand(
       logToFile(`Report path provided: ${reportPath}`)
     }
     
-    const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs])
+    // Set UTF-8 encoding for Windows to prevent Unicode errors
+    const spawnEnv = { ...process.env };
+    if (process.platform === 'win32') {
+      spawnEnv.PYTHONIOENCODING = 'utf-8';
+      spawnEnv.PYTHONUTF8 = '1';
+      logToFile('Windows detected - setting UTF-8 environment variables');
+    }
+    
+    const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs], {
+      env: spawnEnv
+    })
     let stdout = ''
     let stderr = ''
     let stdoutClosed = false;
