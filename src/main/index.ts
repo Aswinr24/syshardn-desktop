@@ -249,6 +249,11 @@ function executeSyshardnCommand(
     const baseCmd = cmdParts[0]
     const baseCmdArgs = cmdParts.slice(1)
     
+    logToFile(`Executing local command: ${baseCmd} ${[...baseCmdArgs, ...fullArgs].join(' ')}`)
+    if (reportPath) {
+      logToFile(`Report path provided: ${reportPath}`)
+    }
+    
     const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs])
     let stdout = ''
     let stderr = ''
@@ -257,6 +262,11 @@ function executeSyshardnCommand(
       const chunk = data.toString()
       stdout += chunk
       logToFile(`Local stdout: ${chunk}`)
+      
+      // Look for "Report saved to:" or similar messages in output
+      if (chunk.includes('report') || chunk.includes('Report') || chunk.includes('saved')) {
+        logToFile(`[REPORT INFO] ${chunk.trim()}`);
+      }
     })
 
     syshardn.stderr.on('data', (data) => {
@@ -271,14 +281,47 @@ function executeSyshardnCommand(
       if (code === 0 || code === 1) {
         if (reportPath) {
           try {
-            if (fs.existsSync(reportPath)) {
-              const reportData = fs.readFileSync(reportPath, 'utf8')
+            // Normalize path for Windows - resolve to absolute path
+            const normalizedPath = require('path').resolve(reportPath);
+            logToFile(`Normalized report path: ${normalizedPath}`);
+            
+            // Check if file exists
+            if (fs.existsSync(normalizedPath)) {
+              logToFile(`Report file found at: ${normalizedPath}`);
+              const reportData = fs.readFileSync(normalizedPath, 'utf8')
               const jsonData = JSON.parse(reportData)
               logToFile('Successfully read and parsed local report file')
               logToFile(`Report summary: ${jsonData.summary?.total || 'N/A'} checks`)
               resolve({ success: true, data: jsonData })
             } else {
-              logToFile(`Report file not found: ${reportPath}`)
+              // Try to list files in the temp directory to debug
+              const tempDir = require('path').dirname(normalizedPath);
+              logToFile(`Report file not found at: ${normalizedPath}`);
+              logToFile(`Temp directory: ${tempDir}`);
+              
+              try {
+                const files = fs.readdirSync(tempDir);
+                const reportFiles = files.filter(f => f.startsWith('syshardn-report-'));
+                logToFile(`Found ${reportFiles.length} syshardn report files in temp dir:`);
+                reportFiles.forEach(f => logToFile(`  - ${f}`));
+                
+                // Try to find a report file with similar timestamp
+                const expectedFilename = require('path').basename(normalizedPath);
+                const foundFile = files.find(f => f.toLowerCase() === expectedFilename.toLowerCase());
+                
+                if (foundFile) {
+                  const actualPath = require('path').join(tempDir, foundFile);
+                  logToFile(`Found file with case-insensitive match: ${actualPath}`);
+                  const reportData = fs.readFileSync(actualPath, 'utf8');
+                  const jsonData = JSON.parse(reportData);
+                  logToFile('Successfully read and parsed report file with corrected path');
+                  resolve({ success: true, data: jsonData });
+                  return;
+                }
+              } catch (listError) {
+                logToFile(`Failed to list temp directory: ${listError}`);
+              }
+              
               resolve({ success: false, data: null, error: 'Report file not found' })
             }
           } catch (e) {
