@@ -255,47 +255,68 @@ function executeSyshardnCommand(
     }
 
     const spawnEnv = { ...process.env };
+    const spawnOptions: any = { env: spawnEnv };
+    
+    // On Windows, redirect stdout to ignore Unicode rendering issues
+    // We don't need console output - only exit codes and generated files matter
     if (process.platform === 'win32') {
       spawnEnv.PYTHONIOENCODING = 'utf-8';
       spawnEnv.PYTHONUTF8 = '1';
-      logToFile('Windows detected - setting UTF-8 environment variables');
+      
+      // Only redirect stdout for non-JSON commands (we need stdout for --json)
+      const isJsonCommand = fullArgs.includes('--json');
+      if (!isJsonCommand) {
+        spawnOptions.stdio = ['ignore', 'ignore', 'pipe']; // stdin=ignore, stdout=ignore, stderr=pipe
+        logToFile('Windows detected - redirecting stdout to prevent Unicode crashes');
+      } else {
+        logToFile('Windows detected - keeping stdout for JSON output');
+      }
     }
     
-    const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs], {
-      env: spawnEnv
-    })
+    const syshardn = spawn(baseCmd, [...baseCmdArgs, ...fullArgs], spawnOptions)
     let stdout = ''
     let stderr = ''
     let stdoutClosed = false;
     let stderrClosed = false;
     let processExited = false;
 
-    syshardn.stdout.on('data', (data) => {
-      const chunk = data.toString()
-      stdout += chunk
-      logToFile(`Local stdout: ${chunk}`)
-      
-      // Look for "Report saved to:" or similar messages in output
-      if (chunk.includes('report') || chunk.includes('Report') || chunk.includes('saved')) {
-        logToFile(`[REPORT INFO] ${chunk.trim()}`);
-      }
-    })
+    // Only capture stdout if it's not redirected
+    if (syshardn.stdout) {
+      syshardn.stdout.on('data', (data) => {
+        const chunk = data.toString()
+        stdout += chunk
+        logToFile(`Local stdout: ${chunk}`)
+        
+        // Look for "Report saved to:" or similar messages in output
+        if (chunk.includes('report') || chunk.includes('Report') || chunk.includes('saved')) {
+          logToFile(`[REPORT INFO] ${chunk.trim()}`);
+        }
+      })
 
-    syshardn.stdout.on('close', () => {
+      syshardn.stdout.on('close', () => {
+        stdoutClosed = true;
+        logToFile('stdout stream closed');
+      });
+    } else {
       stdoutClosed = true;
-      logToFile('stdout stream closed');
-    });
+      logToFile('stdout redirected/ignored');
+    }
 
-    syshardn.stderr.on('data', (data) => {
-      const chunk = data.toString()
-      stderr += chunk
-      logToFile(`Local stderr: ${chunk}`)
-    })
+    if (syshardn.stderr) {
+      syshardn.stderr.on('data', (data) => {
+        const chunk = data.toString()
+        stderr += chunk
+        logToFile(`Local stderr: ${chunk}`)
+      })
 
-    syshardn.stderr.on('close', () => {
+      syshardn.stderr.on('close', () => {
+        stderrClosed = true;
+        logToFile('stderr stream closed');
+      });
+    } else {
       stderrClosed = true;
-      logToFile('stderr stream closed');
-    });
+      logToFile('stderr redirected/ignored');
+    }
 
     syshardn.on('exit', (code) => {
       processExited = true;
@@ -394,8 +415,18 @@ function executeSyshardnCommand(
           // Start the retry process
           checkFileWithRetry(0);
         } else {
-          // No report path - parse from stdout
-          logToFile('No report path provided, parsing stdout for JSON');
+          // No report path - parse from stdout or just return success based on exit code
+          logToFile('No report path provided');
+          
+          // If stdout is empty (redirected on Windows), just return success based on exit code
+          if (stdout.length === 0) {
+            logToFile('Stdout is empty (redirected), returning success based on exit code');
+            resolve({ success: true, data: { message: 'Operation completed successfully' } });
+            return;
+          }
+          
+          // Try to parse stdout as JSON
+          logToFile('Parsing stdout for JSON');
           try {
             // First try to parse the entire stdout as JSON
             try {
@@ -417,11 +448,12 @@ function executeSyshardnCommand(
               return;
             }
             
-            logToFile('No JSON found in stdout');
-            resolve({ success: false, data: stdout, error: 'No JSON output found in command output' });
+            // No JSON found, but command succeeded - return stdout as data
+            logToFile('No JSON found in stdout, returning raw stdout');
+            resolve({ success: true, data: { stdout, message: 'Operation completed' } });
           } catch (e) {
             logToFile(`Failed to parse JSON from stdout: ${e}`);
-            resolve({ success: false, data: stdout, error: 'Failed to parse JSON output' });
+            resolve({ success: true, data: { stdout, message: 'Operation completed' } });
           }
         }
       } else {
