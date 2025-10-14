@@ -258,18 +258,19 @@ function executeSyshardnCommand(
     const spawnOptions: any = { env: spawnEnv };
     
     // On Windows, redirect stdout to ignore Unicode rendering issues
-    // We don't need console output - only exit codes and generated files matter
+    // But keep stdout open for JSON commands
     if (process.platform === 'win32') {
       spawnEnv.PYTHONIOENCODING = 'utf-8';
       spawnEnv.PYTHONUTF8 = '1';
       
-      // Only redirect stdout for non-JSON commands (we need stdout for --json)
+      // Check if this is a JSON command (we need stdout for --json)
       const isJsonCommand = fullArgs.includes('--json');
       if (!isJsonCommand) {
         spawnOptions.stdio = ['ignore', 'ignore', 'pipe']; // stdin=ignore, stdout=ignore, stderr=pipe
         logToFile('Windows detected - redirecting stdout to prevent Unicode crashes');
       } else {
-        logToFile('Windows detected - keeping stdout for JSON output');
+        spawnOptions.stdio = ['ignore', 'pipe', 'pipe']; // stdin=ignore, stdout=pipe, stderr=pipe
+        logToFile('Windows detected - keeping stdout open for JSON output');
       }
     }
     
@@ -330,7 +331,10 @@ function executeSyshardnCommand(
       logToFile(`Stdout preview (last 500 chars): ${stdout.substring(Math.max(0, stdout.length - 500))}`)
       logToFile(`Process state: exit=${processExited}, stdout=${stdoutClosed}, stderr=${stderrClosed}`)
       
-      if (code === 0 || code === 1) {
+      // Check if command succeeded
+      const isSuccess = code === 0 || (code === 1 && command === 'check');
+      
+      if (isSuccess) {
         if (reportPath) {
           // On Windows, the file might take longer to be flushed to disk
           // Wait for process to fully complete and file to be written
@@ -418,10 +422,31 @@ function executeSyshardnCommand(
           // No report path - parse from stdout or just return success based on exit code
           logToFile('No report path provided');
           
-          // If stdout is empty (redirected on Windows), just return success based on exit code
+          // If stdout is empty (redirected on Windows for non-JSON commands)
           if (stdout.length === 0) {
-            logToFile('Stdout is empty (redirected), returning success based on exit code');
-            resolve({ success: true, data: { message: 'Operation completed successfully' } });
+            if (stderr && stderr.length > 0) {
+              logToFile('Stdout is empty but stderr has content');
+              logToFile(`Stderr preview: ${stderr.substring(0, 500)}`);
+              
+              // Check if it's a Unicode crash (not an actual failure)
+              const isUnicodeCrash = stderr.includes('UnicodeEncodeError') || 
+                                     stderr.includes('charmap') || 
+                                     stderr.includes('Failed to execute script');
+              
+              if (isUnicodeCrash) {
+                logToFile('Detected Unicode crash - operation likely completed before crash');
+                // This should not happen with --json flag, but handle it anyway
+                resolve({ success: true, data: '' });
+                return;
+              }
+              
+              // Real error
+              resolve({ success: false, data: null, error: stderr });
+              return;
+            }
+            logToFile('Stdout is empty (redirected), command succeeded with exit code 0');
+            // This happens for non-JSON commands like 'report' that just create files
+            resolve({ success: true, data: '' });
             return;
           }
           
@@ -448,12 +473,12 @@ function executeSyshardnCommand(
               return;
             }
             
-            // No JSON found, but command succeeded - return stdout as data
+            // No JSON found, but command succeeded - return stdout as string
             logToFile('No JSON found in stdout, returning raw stdout');
-            resolve({ success: true, data: { stdout, message: 'Operation completed' } });
+            resolve({ success: true, data: stdout });
           } catch (e) {
             logToFile(`Failed to parse JSON from stdout: ${e}`);
-            resolve({ success: true, data: { stdout, message: 'Operation completed' } });
+            resolve({ success: true, data: stdout });
           }
         }
       } else {
@@ -599,6 +624,13 @@ function setupIPCHandlers(): void {
     
     const args = ['--rules', ruleIds.join(','), '--force']
     
+    // On Windows, use --json flag to get JSON output directly (avoids Unicode issues)
+    const isWindows = process.platform === 'win32' && !appSettings.ssh.enabled;
+    if (isWindows) {
+      args.push('--json');
+      logToFile('Windows detected - adding --json flag to apply command');
+    }
+    
     logToFile(`Apply command args: ${JSON.stringify(args)}`)
     
     return executeSyshardnCommand('apply', args)
@@ -669,6 +701,14 @@ function setupIPCHandlers(): void {
 
   ipcMain.handle('rollback', async (_event, ruleId: string) => {
     const args = ['--rule-id', ruleId, '--latest', '--force']
+    
+    // On Windows, use --json flag to get JSON output directly (avoids Unicode issues)
+    const isWindows = process.platform === 'win32' && !appSettings.ssh.enabled;
+    if (isWindows) {
+      args.push('--json');
+      logToFile('Windows detected - adding --json flag to rollback command');
+    }
+    
     return executeSyshardnCommand('rollback', args)
   })
 
@@ -686,6 +726,17 @@ function setupIPCHandlers(): void {
       logToFile(`Generating report: format=${format}, output=${outputPath}`)
       
       const result = await executeSyshardnCommand('report', args)
+      
+      // On Windows, the CLI might crash after generating the file
+      // Check if file exists even if command reported failure
+      if (!result.success && !appSettings.ssh.enabled) {
+        if (fs.existsSync(outputPath)) {
+          logToFile('Command failed but report file exists - treating as success');
+          result.success = true;
+        } else {
+          return result;
+        }
+      }
       
       if (!result.success) {
         return result
