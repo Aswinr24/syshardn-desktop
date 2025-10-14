@@ -74,11 +74,18 @@ function saveSettingsToFile(): void {
   }
 }
 
+let sshCommandInProgress = false;
+
 function executeSSHCommand(
   command: string,
   config: AppSettings['ssh']
 ): Promise<{ success: boolean; data: any; error?: string }> {
   return new Promise((resolve) => {
+    if (sshCommandInProgress) {
+      logToFile(`WARNING: SSH command already in progress, potential duplicate call detected!`);
+    }
+    sshCommandInProgress = true;
+    
     logToFile(`=== SSH Command Execution ===`)
     logToFile(`Remote command: ${command}`)
     logToFile(`SSH host: ${config.username}@${config.host}:${config.port}`)
@@ -121,6 +128,7 @@ function executeSSHCommand(
       })
 
       sshpassCmd.on('close', (code) => {
+        sshCommandInProgress = false;
         logToFile(`SSH command exited with code: ${code}`)
         if (code === 0 || code === 1) {
           resolve({ success: true, data: stdout })
@@ -131,6 +139,7 @@ function executeSSHCommand(
       })
 
       sshpassCmd.on('error', (err) => {
+        sshCommandInProgress = false;
         logToFile(`SSH process error: ${err.message}`)
         resolve({ success: false, data: null, error: `SSH error: ${err.message}. Make sure sshpass is installed for password authentication.` })
       })
@@ -150,6 +159,7 @@ function executeSSHCommand(
       })
 
       sshCmd.on('close', (code) => {
+        sshCommandInProgress = false;
         logToFile(`SSH command exited with code: ${code}`)
         if (code === 0 || code === 1) {
           resolve({ success: true, data: stdout })
@@ -160,6 +170,7 @@ function executeSSHCommand(
       })
 
       sshCmd.on('error', (err) => {
+        sshCommandInProgress = false;
         logToFile(`SSH process error: ${err.message}`)
         resolve({ success: false, data: null, error: `SSH error: ${err.message}` })
       })
@@ -349,32 +360,50 @@ function setupIPCHandlers(): void {
     }
   })
 
+  let scanInProgress = false;
+  
   ipcMain.handle('start-scan', async (_event, config: any) => {
-    const args: string[] = []
-    
-    if (config.profile) {
-      args.push('--level', config.profile)
+    // Prevent concurrent scans
+    if (scanInProgress) {
+      logToFile('Scan already in progress, ignoring duplicate request');
+      return { success: false, error: 'Scan already in progress' };
     }
     
-    if (config.categories && config.categories.length > 0) {
-      args.push('--categories', config.categories.join(','))
-    }
+    scanInProgress = true;
+    logToFile('=== STARTING NEW SCAN ===');
     
-    if (config.rules && config.rules.length > 0) {
-      args.push('--rules', config.rules.join(','))
-    }
+    try {
+      const args: string[] = []
+      
+      if (config.profile) {
+        args.push('--level', config.profile)
+      }
+      
+      if (config.categories && config.categories.length > 0) {
+        args.push('--categories', config.categories.join(','))
+      }
+      
+      if (config.rules && config.rules.length > 0) {
+        args.push('--rules', config.rules.join(','))
+      }
 
-    const reportFileName = `syshardn-report-${Date.now()}.json`
-    const reportPath = appSettings.ssh.enabled 
-      ? `/tmp/${reportFileName}`
-      : join(app.getPath('temp'), reportFileName)
-    
-    args.push('--report', reportPath)
-    
-    logToFile(`Scan config: ${JSON.stringify(config, null, 2)}`)
-    logToFile(`Report will be saved to: ${reportPath}`)
+      const reportFileName = `syshardn-report-${Date.now()}.json`
+      const reportPath = appSettings.ssh.enabled 
+        ? `/tmp/${reportFileName}`
+        : join(app.getPath('temp'), reportFileName)
+      
+      args.push('--report', reportPath)
+      
+      logToFile(`Scan config: ${JSON.stringify(config, null, 2)}`)
+      logToFile(`Report will be saved to: ${reportPath}`)
 
-    return executeSyshardnCommand('check', args, reportPath)
+      const result = await executeSyshardnCommand('check', args, reportPath);
+      
+      logToFile('=== SCAN COMPLETED ===');
+      return result;
+    } finally {
+      scanInProgress = false;
+    }
   })
 
   ipcMain.on('scan-progress-subscribe', (event) => {

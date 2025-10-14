@@ -43,7 +43,7 @@ export const ApplyingHardeningPage = () => {
     
     const initialStatuses: ApplyStatus[] = rulesToApply.map((rule) => ({
       ruleId: rule.id,
-      title: rule.title,
+      title: rule.description || rule.title, // Use description as the main title
       status: 'pending',
     }));
     setApplyStatuses(initialStatuses);
@@ -227,15 +227,13 @@ export const ApplyingHardeningPage = () => {
                   avatar={getStatusIcon(item.status)}
                   title={
                     <Space>
-                      <Text>{item.title}</Text>
+                      <Text strong>{item.ruleId}</Text>
                       {getStatusTag(item.status)}
                     </Space>
                   }
                   description={
                     <Space direction="vertical" size="small">
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {item.ruleId}
-                      </Text>
+                      <Text style={{ fontSize: 14 }}>{item.title}</Text>
                       {item.message && (
                         <Text type={item.status === 'failure' ? 'danger' : 'secondary'}>
                           {item.message}
@@ -289,20 +287,19 @@ export const ApplyingHardeningPage = () => {
                     avatar={getStatusIcon(item.status)}
                     title={
                       <Space>
-                        <Text
-                          style={{
-                            fontWeight: item.status === 'applying' ? 'bold' : 'normal',
-                          }}
-                        >
-                          {item.title}
-                        </Text>
+                        <Text strong>{item.ruleId}</Text>
                         {getStatusTag(item.status)}
                       </Space>
                     }
                     description={
                       <Space direction="vertical" size="small">
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {item.ruleId}
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: item.status === 'applying' ? 'bold' : 'normal',
+                          }}
+                        >
+                          {item.title}
                         </Text>
                         {item.message && (
                           <Text type={item.status === 'failure' ? 'danger' : 'secondary'}>

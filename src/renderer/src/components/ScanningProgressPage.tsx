@@ -6,7 +6,7 @@ import {
   WarningOutlined,
   StopOutlined,
 } from '@ant-design/icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../store';
 import { RuleCheck } from '../types';
 
@@ -53,7 +53,19 @@ export const ScanningProgressPage = () => {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [recentChecks, setRecentChecks] = useState<RuleCheck[]>([]);
 
+  const scanStartedRef = useRef(false);
+
   useEffect(() => {
+    if (scanStartedRef.current) {
+      console.log('Scan already started, skipping duplicate execution');
+      return;
+    }
+    scanStartedRef.current = true;
+
+    setScanProgress(0);
+    setRecentChecks([]);
+    setCurrentScanRule(null);
+    
     // Track elapsed time
     const startTime = Date.now();
     const timerInterval = setInterval(() => {
@@ -64,12 +76,13 @@ export const ScanningProgressPage = () => {
     // Simulate progress while scanning (visual feedback)
     let progress = 0;
     const progressInterval = setInterval(() => {
-      progress = Math.min(progress + Math.random() * 5, 95); // Stop at 95%, complete when done
+      progress = Math.min(progress + Math.random() * 3, 95); // Stop at 95%, complete when done
       setScanProgress(progress);
-    }, 1000);
+    }, 500); // Update every 500ms for smoother animation
 
     // Actually run the scan
     const runScan = async () => {
+      console.log('Starting scan execution...');
       try {
         // Start the scan with the selected configuration
         const { selectedProfile, selectedCategories } = useAppStore.getState();
@@ -81,14 +94,18 @@ export const ScanningProgressPage = () => {
         // Call the actual API
         const result = await window.api.startScan(config);
         
+        // Stop the timer but keep the progress animation running briefly
         clearInterval(timerInterval);
-        clearInterval(progressInterval);
         
         if (result.success && result.data) {
           // Parse the actual scan results
           const scanData = result.data;
           
-          console.log('Received scan data:', scanData);
+          console.log('=== RAW SCAN DATA ===');
+          console.log('Full scan data structure:', JSON.stringify(scanData, null, 2));
+          console.log('Type of scanData:', typeof scanData);
+          console.log('Is array?', Array.isArray(scanData));
+          console.log('Keys:', Object.keys(scanData));
           
           // Parse the rules from scan data - API returns "results" not "rules"
           const rawResults = scanData.results || scanData.rules || [];
@@ -133,9 +150,10 @@ export const ScanningProgressPage = () => {
           };
           
           const duration = Math.floor((Date.now() - startTime) / 1000);
+          const scanId = `scan-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           
           const scanResult = {
-            id: `scan-${Date.now()}`,
+            id: scanId,
             timestamp: new Date().toISOString(),
             profile: selectedProfile,
             duration,
@@ -148,7 +166,16 @@ export const ScanningProgressPage = () => {
             summary,
           };
           
+          console.log('=== CREATING SCAN RESULT ===');
+          console.log('Scan ID:', scanId);
+          console.log('Compliance Score:', complianceScore);
+          console.log('Total Rules:', totalRules);
+          console.log('Failed Rules:', failedRules);
+          console.log('About to add to history...');
+
+          clearInterval(progressInterval);
           setScanProgress(100);
+          
           setCurrentScanResult(scanResult);
           addScanToHistory(scanResult);
           
@@ -158,11 +185,16 @@ export const ScanningProgressPage = () => {
         } else {
           // Handle error
           console.error('Scan failed:', result.error);
+          if (result.error && result.error.includes('already in progress')) {
+            console.log('Ignoring duplicate scan request (React StrictMode)');
+            return;
+          }
+          
+          clearInterval(progressInterval);
           alert(`Scan failed: ${result.error || 'Unknown error'}\n\nMake sure SysHardn CLI is installed and accessible.`);
           setCurrentPage('config');
         }
       } catch (error) {
-        clearInterval(timerInterval);
         clearInterval(progressInterval);
         console.error('Scan error:', error);
         alert(`Scan error: ${error}\n\nMake sure SysHardn CLI is installed and accessible.`);
@@ -175,6 +207,8 @@ export const ScanningProgressPage = () => {
     return () => {
       clearInterval(timerInterval);
       clearInterval(progressInterval);
+      // Don't reset scanStartedRef here - it should persist across StrictMode remounts
+      // It will be reset when we navigate to a different page
     };
   }, []);
 

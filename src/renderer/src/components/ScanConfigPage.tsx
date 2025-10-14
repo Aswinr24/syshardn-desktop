@@ -54,21 +54,8 @@ export const ScanConfigPage = () => {
   };
 
   const handleStartScan = async () => {
-    const config = {
-      profile: selectedProfile,
-      categories: selectedCategories.length > 0 ? selectedCategories : undefined,
-    };
-
+    // Navigate to scanning page - it will handle the actual scan
     setCurrentPage('scanning');
-
-    try {
-      const result = await window.api.startScan(config);
-      if (result.success) {
-        // Handle success - will be managed by scanning page
-      }
-    } catch (error) {
-      console.error('Failed to start scan:', error);
-    }
   };
 
   const handleBack = () => {

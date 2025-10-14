@@ -22,6 +22,7 @@ export const RollbackInterfacePage = () => {
   const { message } = App.useApp();
   const { setCurrentPage } = useAppStore();
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(true);
   const [selectedBackup, setSelectedBackup] = useState<BackupInfo | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isRollingBack, setIsRollingBack] = useState(false);
@@ -33,6 +34,7 @@ export const RollbackInterfacePage = () => {
   }, []);
 
   const loadBackups = async () => {
+    setIsLoadingBackups(true);
     try {
       const result = await window.api.getBackups();
       if (result.success && result.data) {
@@ -43,6 +45,8 @@ export const RollbackInterfacePage = () => {
     } catch (error) {
       console.error('Failed to load backups:', error);
       message.error('Failed to load backups');
+    } finally {
+      setIsLoadingBackups(false);
     }
   };
 
@@ -162,7 +166,19 @@ export const RollbackInterfacePage = () => {
         style={{ marginTop: 16 }}
       />
 
-      {backups.length === 0 ? (
+      {isLoadingBackups ? (
+        <Card style={{ marginTop: 24, textAlign: 'center' }}>
+          <Space direction="vertical" size="large" style={{ padding: '40px 0' }}>
+            <RollbackOutlined style={{ fontSize: 48, color: '#1890ff' }} />
+            <div>
+              <Title level={4}>Loading Backups...</Title>
+              <Text type="secondary">
+                Please wait while we fetch available backup points from your system.
+              </Text>
+            </div>
+          </Space>
+        </Card>
+      ) : backups.length === 0 ? (
         <Card style={{ marginTop: 24, textAlign: 'center' }}>
           <Space direction="vertical" size="large">
             <HistoryOutlined style={{ fontSize: 48, color: '#d9d9d9' }} />
