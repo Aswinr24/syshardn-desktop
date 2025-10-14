@@ -25,8 +25,7 @@ SysHardn GUI provides an intuitive interface for system administrators to scan, 
 
 ### 📊 **Scanning Progress**
 - Real-time progress bar with percentage
-- Live feed of recent rule checks (last 5)
-- Color-coded status indicators (✅ Pass, ❌ Fail, ⚠️ Warning)
+- Live feed of recent rule checks
 - Cancel scan option
 
 ### 📈 **Scan Results**
@@ -49,6 +48,11 @@ SysHardn GUI provides an intuitive interface for system administrators to scan, 
 - Confirmation modal with warnings
 - Progress indication during rollback
 
+### 🌐 **Remote SSH Support**
+- Connect to remote servers via SSH
+- Run SysHardn scans and hardening on remote systems
+- Manage server security from your desktop
+
 ## Tech Stack
 
 - **Framework**: Electron.js with React
@@ -61,8 +65,8 @@ SysHardn GUI provides an intuitive interface for system administrators to scan, 
 ## Prerequisites
 
 - Node.js 18+ and npm/yarn
-- Python 3.8+ (for SysHardn CLI)
-- SysHardn CLI tool installed at `./syshardn`
+- **SysHardn CLI tool** - Download the latest release from [syshardn releases](https://github.com/Aswinr24/syshardn/releases)
+  - After downloading, place the `syshardn` executable in your PATH or in the application directory
 
 ## Installation
 
@@ -90,27 +94,6 @@ npm run build:mac
 # For Linux
 npm run build:linux
 ```
-
-## Project Structure
-
-```
-syshardn-gui/
-├── src/
-│   ├── main/                 # Electron main process
-│   │   └── index.ts         # IPC handlers and CLI integration
-│   ├── preload/             # Preload scripts
-│   │   ├── index.ts         # API exposure to renderer
-│   │   └── index.d.ts       # Type definitions
-│   └── renderer/            # React application
-│       ├── src/
-│       │   ├── components/  # React components
-│       │   ├── store/       # Zustand state management
-│       │   ├── types/       # TypeScript definitions
-│       │   ├── App.tsx      # Main app component
-│       │   └── main.tsx     # Entry point
-│       └── index.html
-```
-
 ## IPC Communication
 
 Available APIs via `window.api`:
@@ -130,14 +113,8 @@ Available APIs via `window.api`:
 - **macOS**: 10.15+
 - **Linux**: Ubuntu 20.04+, CentOS/RHEL 8+
 
-## Recommended IDE Setup
-
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
-
 ## License
 
-MIT License
+[MIT License](LICENSE)
 
 ---
-
-**Made with ❤️ for System Administrators**
