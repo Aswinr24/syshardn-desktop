@@ -56,7 +56,7 @@ SysHardn GUI provides an intuitive interface for system administrators to scan, 
 ## Tech Stack
 
 - **Framework**: Electron.js with React
-- **UI Library**: Ant Design (antd)
+- **UI Library**: Ant Design (antd) 
 - **State Management**: Zustand
 - **Language**: TypeScript
 - **Build Tool**: Electron Vite
